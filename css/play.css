@@ -1,0 +1,150 @@
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  font-family: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+  color: #fff;
+  user-select: none;
+  -webkit-user-select: none;
+}
+[hidden] { display: none !important; }
+
+body { background: #2b2a33; transition: background 0.3s; }
+body.role-hider { background: linear-gradient(180deg, #1f6f8b, #164f66); }
+body.role-seeker { background: linear-gradient(180deg, #c23b44, #8f2430); }
+body.role-out { background: #55535c; }
+body.role-win { background: linear-gradient(180deg, #e0a100, #b07a00); }
+body.role-lose { background: #45434d; }
+
+.view {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+
+/* 参加画面 */
+.join { justify-content: center; gap: 14px; max-width: 420px; margin: 0 auto; }
+.join h1 { margin: 0 0 10px; text-align: center; font-size: 34px; font-weight: 800; line-height: 1.2; }
+.join h1 span { color: #ff6b6b; }
+.join label { display: flex; flex-direction: column; gap: 6px; font-weight: 800; }
+.join input {
+  font: inherit; font-size: 22px;
+  padding: 12px 14px;
+  border: none; border-radius: 14px;
+  color: #2b2a33;
+  user-select: text; -webkit-user-select: text;
+}
+#codeInput { text-transform: uppercase; letter-spacing: 0.2em; }
+.join button {
+  margin-top: 8px;
+  padding: 16px;
+  font: inherit; font-size: 24px; font-weight: 800;
+  color: #fff; background: #ff4f4f;
+  border: none; border-radius: 18px;
+  box-shadow: 0 5px 0 #c73636;
+}
+.join button:active { transform: translateY(3px); box-shadow: 0 2px 0 #c73636; }
+.msg { min-height: 1.5em; margin: 0; text-align: center; color: #ffd9d9; }
+
+/* コントローラー */
+.pad { gap: 10px; }
+.top { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.me { display: flex; align-items: center; gap: 8px; }
+.me i { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #fff; }
+.status { flex: 1; color: #ffe08a; font-size: 13px; }
+.screen-btn {
+  margin-left: auto;
+  padding: 5px 10px;
+  font: inherit; font-size: 13px;
+  color: #fff; background: rgba(255, 255, 255, 0.16);
+  border: none; border-radius: 999px;
+}
+.pad-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.controls { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+
+/* 広場の画面 */
+.screen {
+  position: relative;
+  flex: none;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #1d1c22;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.screen canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.screen-note {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  margin: 0; padding: 12px;
+  text-align: center; font-weight: 800;
+  background: #1d1c22;
+}
+
+.role .title { margin: 4px 0 2px; font-size: 30px; font-weight: 800; }
+.role .text { margin: 0; font-size: 17px; line-height: 1.6; opacity: 0.95; }
+.with-screen .role .title { margin: 0; font-size: 22px; }
+.with-screen .role .text { font-size: 14px; line-height: 1.5; }
+.with-screen .stick-area { min-height: 150px; }
+.with-screen .catch { height: 18vh; font-size: 28px; }
+
+/* 横向き：左に画面、右に操作 */
+@media (orientation: landscape) and (max-height: 600px) {
+  .with-screen .pad-body { flex-direction: row; }
+  .with-screen .screen { width: auto; height: 100%; max-width: 64%; align-self: center; }
+  .with-screen .controls { min-width: 0; }
+  .with-screen .role .text { display: none; }
+  .with-screen .stick-area { min-height: 0; }
+  .with-screen .catch { height: 30vh; }
+}
+
+.stick-area {
+  position: relative;
+  flex: 1;
+  min-height: 200px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.08);
+  touch-action: none;
+}
+.stick-base {
+  position: absolute;
+  width: 150px; height: 150px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+}
+.stick-base.active { border-color: rgba(255, 255, 255, 0.7); }
+.stick-knob {
+  position: absolute; left: 50%; top: 50%;
+  width: 70px; height: 70px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+.stick-hint {
+  position: absolute; left: 0; right: 0; bottom: 10px;
+  margin: 0; text-align: center; font-size: 13px; opacity: 0.7;
+  pointer-events: none;
+}
+
+.catch {
+  flex: none;
+  height: 28vh; max-height: 200px;
+  font: inherit; font-size: 34px; font-weight: 800;
+  color: #c23b44; background: #fff;
+  border: none; border-radius: 28px;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.25);
+  touch-action: none;
+}
+.catch:active { transform: translateY(4px); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.25); }
+.catch.cool { opacity: 0.45; }
+
+.info { min-height: 1.4em; text-align: center; font-size: 18px; font-weight: 800; }

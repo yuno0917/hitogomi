@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>テスト｜この中にニンゲンがいる</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .ok { color: #1a7f37; }
+  .ng { color: #c00; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>ルールのテスト</h1>
+<p id="summary"></p>
+<ol id="out"></ol>
+<script src="js/game.js"></script>
+<script>
+  const H = Hitogomi, C = H.CONST;
+  const results = [];
+  function test(name, fn) {
+    try { fn(); results.push([true, name]); } catch (e) { results.push([false, name + ' — ' + e.message]); }
+  }
+  function eq(a, b, msg) { if (a !== b) throw new Error(`${msg || ''} 期待 ${b} / 実際 ${a}`); }
+  function ok(v, msg) { if (!v) throw new Error(msg || 'NG'); }
+  function near(a, b, tol, msg) { if (Math.abs(a - b) > tol) throw new Error(`${msg || ''} 期待 ${b}±${tol} / 実際 ${a}`); }
+
+  function newGame(extra) {
+    return H.createGame(Object.assign({
+      seed: 42, hiders: [{ pid: 'a', name: 'A' }, { pid: 'b', name: 'B' }], seeker: 'pc', hideTime: 0.5, lives: 0
+    }, extra));
+  }
+  function run(g, sec, inputs) {
+    const n = Math.round(sec * 60);
+    for (let i = 0; i < n; i++) H.step(g, 1 / 60, inputs);
+  }
+  const who = (g, pid) => g.chars.find(c => c.pid === pid);
+  const toPlay = g => run(g, 0.6);
+
+  test('乱数は同じ種から同じ列になる', () => {
+    const a = H.rng(5), b = H.rng(5);
+    for (let i = 0; i < 5; i++) eq(a(), b());
+  });
+
+  test('NPC 40人＋ニンゲン2人が、壁と障害物の外に置かれる', () => {
+    const g = newGame();
+    eq(g.chars.length, 42);
+    eq(g.chars.filter(c => c.kind === 'human').length, 2);
+    for (const c of g.chars) ok(H.isFree(c.x, c.y, C.R), `(${c.x|0}, ${c.y|0}) が通れない場所`);
+  });
+
+  test('★の目標は ニンゲンの数×3（1人あたりの数を変えられる）', () => {
+    eq(newGame().goal, 6);
+    eq(newGame({ starsPerHider: 1 }).goal, 2);
+    eq(newGame({ starsPerHider: 5 }).goal, 10);
+  });
+
+  test('NPCを100人にしても、全員が通れる場所に置かれる', () => {
+    const g = newGame({ npcCount: 100 });
+    eq(g.chars.length, 102);
+    for (const c of g.chars) ok(H.isFree(c.x, c.y, C.R), `(${c.x|0}, ${c.y|0})`);
+  });
+
+  test('ニンゲンの並び順は毎回ちがう（順番で正体がばれない）', () => {
+    const idx = new Set();
+    for (let s = 1; s <= 20; s++) idx.add(newGame({ seed: s }).chars.findIndex(c => c.pid === 'a'));
+    ok(idx.size > 5, '位置の種類 ' + idx.size);
+  });
+
+  function solo() {
+    const g = newGame({ npcCount: 0, hiders: [{ pid: 'a', name: 'A' }] });
+    const c = who(g, 'a');
+    c.x = 400; c.y = 450;
+    return { g, c };
+  }
+
+  test('スティックをいっぱいに倒すと、NPCと同じ速さで歩く', () => {
+    const { g, c } = solo();
+    run(g, 1, { a: { x: 1, y: 0 } });
+    near(c.x, 400 + C.WALK, 1);
+    near(c.y, 450, 0.01);
+  });
+
+  test('斜めに半分倒しても、速さは同じ（速さで正体がばれない）', () => {
+    const { g, c } = solo();
+    run(g, 1, { a: { x: 0.3, y: 0.3 } });
+    near(Math.hypot(c.x - 400, c.y - 450), C.WALK, 1);
+  });
+
+  test('少しだけ倒すと、歩かずに向きだけ変わる', () => {
+    const { g, c } = solo();
+    run(g, 0.5, { a: { x: 0, y: 0.18 } });
+    eq(c.x, 400); eq(c.y, 450);
+    near(c.dir, Math.PI / 2, 0.001);
+    eq(c.moving, false);
+  });
+
+  test('ほとんど倒していないときは何もしない', () => {
+    const { g, c } = solo();
+    const d = c.dir;
+    run(g, 0.5, { a: { x: 0.05, y: 0 } });
+    eq(c.dir, d); eq(c.x, 400);
+  });
+
+  test('壁に向かって歩きつづけても、広場の外に出ない', () => {
+    const { g, c } = solo();
+    run(g, 30, { a: { x: -1, y: 0 } });
+    near(c.x, C.BOUNDS.x0 + C.R, 0.01);
+    near(c.y, 450, 0.01);
+  });
+
+  test('噴水に向かって歩いても、噴水の中に入らない', () => {
+    const { g, c } = solo();
+    c.x = 600; c.y = 490;
+    run(g, 10, { a: { x: 1, y: 0 } });
+    ok(H.isFree(c.x, c.y, C.R - 0.5), `(${c.x}, ${c.y})`);
+  });
+
+  test('NPCは2分歩いても、広場の外や障害物の中に入らない', () => {
+    const g = newGame({ hideTime: 1e9 });
+    run(g, 120);
+    for (const c of g.chars.filter(c => c.kind === 'npc')) ok(H.isFree(c.x, c.y, C.R - 1), `(${c.x|0}, ${c.y|0})`);
+  });
+
+  test('NPCは歩いたり止まったりする（ずっと止まっている人がいない）', () => {
+    const g = newGame({ hideTime: 1e9 });
+    const start = g.chars.map(c => [c.x, c.y]);
+    run(g, 60);
+    const still = g.chars.filter((c, i) => c.kind === 'npc' && Math.hypot(c.x - start[i][0], c.y - start[i][1]) < 30);
+    eq(still.length, 0, '動かなかったNPC');
+  });
+
+  test('自分さがしタイムが終わると始まり、★が2つ出る', () => {
+    const g = newGame();
+    eq(g.phase, 'hide');
+    toPlay(g);
+    eq(g.phase, 'play');
+    eq(g.stars.length, 2);
+    ok(g.events.some(e => e.type === 'start'));
+  });
+
+  test('自分さがしタイム中は、鬼は動けず、つかまえられない', () => {
+    const g = newGame({ seeker: 's', hideTime: 5 });
+    const x = g.seeker.x;
+    run(g, 1, { s: { x: 1, y: 0 } });
+    eq(g.seeker.x, x);
+    eq(H.attack(g), null);
+    const c = g.chars[0];
+    eq(H.tapAt(g, c.x, c.y - 14), null);
+  });
+
+  test('鬼のスタート地点のそばには、だれも置かない', () => {
+    for (let seed = 1; seed <= 10; seed++) {
+      const g = newGame({ seed });
+      for (const c of g.chars) ok(Math.hypot(c.x - g.seeker.x, c.y - g.seeker.y) > 100, `seed ${seed}`);
+    }
+  });
+
+  test('ニンゲンが★にふれると拾える', () => {
+    const g = newGame(); toPlay(g);
+    const c = who(g, 'a'), s = g.stars[0];
+    c.x = s.x; c.y = s.y;
+    H.step(g, 1 / 60, {});
+    eq(g.collected, 1); eq(H.findHider(g, 'a').stars, 1);
+    eq(g.stars.length, 1);
+    ok(g.events.some(e => e.type === 'star' && e.pid === 'a'));
+  });
+
+  test('NPCが★を取ると、数には入らず、見た目は同じ「★」の出来事になる', () => {
+    const g = newGame(); toPlay(g);
+    g.events.length = 0;
+    const s = g.stars[0];
+    const n = g.chars.find(c => c.kind === 'npc');
+    n.x = s.x; n.y = s.y;
+    H.step(g, 1 / 60, {});
+    eq(g.collected, 0);
+    eq(g.stolen, 1);
+    eq(g.stars.length, 1);
+    const e = g.events.find(e => e.type === 'star');
+    ok(e, '★の出来事がない');
+    eq(e.pid, null);
+  });
+
+  test('★が取られると、1.5秒後に別の場所へ新しい★が出る', () => {
+    const g = newGame({ npcCount: 1 }); toPlay(g);
+    const s = g.stars[0];
+    const n = g.chars.find(c => c.kind === 'npc');
+    n.x = s.x; n.y = s.y;
+    H.step(g, 1 / 60, {});
+    eq(g.stars.length, 1);
+    run(g, 1.3);
+    eq(g.stars.length, 1, '1.3秒後');
+    run(g, 0.3);
+    eq(g.stars.length, 2, '1.6秒後');
+  });
+
+  test('広場の★は、残っているニンゲンの数だけ', () => {
+    const g = newGame({ npcCount: 0, hiders: [{ pid: 'a' }, { pid: 'b' }, { pid: 'c' }] }); toPlay(g);
+    eq(g.stars.length, 3);
+    run(g, 20);
+    eq(g.stars.length, 3, 'だれも取らなければ増えない');
+    const a = who(g, 'a');
+    a.x = 400; a.y = 400;
+    for (const o of g.chars) if (o !== a) { o.x = 1400; o.y = 800; }
+    tapOn(g, a);
+    const s = g.stars[0], b = who(g, 'b');
+    b.x = s.x; b.y = s.y;
+    H.step(g, 1 / 60, {});
+    run(g, 2);
+    eq(g.stars.length, 2, '1人つかまったあとは2つ');
+  });
+
+  // 鬼を人のすぐ左に置いて、その人をタップする
+  function tapOn(g, c) {
+    g.seeker.x = c.x - 40; g.seeker.y = c.y; g.seeker.cooldown = 0;
+    return H.tapAt(g, c.x, c.y - 14);
+  }
+
+  test('タップは人の見た目の真ん中（足もとの少し上）で当たる', () => {
+    const { g, c } = solo();
+    toPlay(g);
+    eq(tapOn(g, c), 'caught');
+  });
+
+  test('鬼から遠い人をタップしても「とどかない」。待ち時間も使わない', () => {
+    const { g, c } = solo();
+    toPlay(g);
+    g.seeker.x = c.x + C.REACH + 30; g.seeker.y = c.y;
+    eq(H.tapAt(g, c.x, c.y - 14), 'far');
+    eq(c.out, null);
+    eq(g.seeker.cooldown, 0);
+    ok(g.events.some(e => e.type === 'far'));
+  });
+
+  test('だれもいない所をタップしても何も起きない', () => {
+    const { g } = solo();
+    toPlay(g);
+    eq(H.tapAt(g, 1500, 120), null);
+    eq(g.seeker.cooldown, 0);
+  });
+
+  test('前方攻撃は、目の前の人に当たり、うしろの人には当たらない', () => {
+    const g = newGame({ npcCount: 0 }); toPlay(g);
+    const a = who(g, 'a'), b = who(g, 'b');
+    const s = g.seeker;
+    s.x = 600; s.y = 700; s.dir = 0;           // 右を向いている
+    a.x = 640; a.y = 700;                       // 目の前
+    b.x = 560; b.y = 700;                       // うしろ
+    eq(H.attack(g), 'caught');
+    eq(H.findHider(g, 'a').out, 'caught'); eq(H.findHider(g, 'b').out, null);
+    ok(g.events.some(e => e.type === 'swing'));
+  });
+
+  test('前方攻撃は、とどく距離より遠い人には当たらない', () => {
+    const g = newGame({ npcCount: 0 }); toPlay(g);
+    const a = who(g, 'a'), b = who(g, 'b');
+    g.seeker.x = 600; g.seeker.y = 700; g.seeker.dir = 0;
+    a.x = 600 + C.ATTACK_RANGE + 10; a.y = 700;
+    b.x = 1400; b.y = 300;
+    eq(H.attack(g), 'whiff');
+    eq(a.out, null);
+  });
+
+  test('前方攻撃は、いちばん近い1人だけをつかまえる', () => {
+    const g = newGame({ npcCount: 0 }); toPlay(g);
+    const a = who(g, 'a'), b = who(g, 'b');
+    g.seeker.x = 600; g.seeker.y = 700; g.seeker.dir = 0;
+    a.x = 640; a.y = 700; b.x = 625; b.y = 710;
+    H.attack(g);
+    eq(H.findHider(g, 'b').out, 'caught'); eq(H.findHider(g, 'a').out, null);
+  });
+  function isolated(g, kind) {
+    // まわり60以内にだれもいない人を選ぶ（となりの人に当たらないように）
+    return g.chars.find(c => c.kind === kind && !c.out &&
+      g.chars.every(o => o === c || Math.hypot(o.x - c.x, o.y - c.y) > 60));
+  }
+
+  test('NPCをつかまえるとハズレ。そのNPCはすわりこんで動かなくなる', () => {
+    const g = newGame(); toPlay(g);
+    const n = isolated(g, 'npc');
+    eq(tapOn(g, n), 'miss');
+    eq(g.seeker.misses, 1);
+    eq(n.out, 'miss');
+    const x = n.x, y = n.y;
+    run(g, 3);
+    eq(n.x, x); eq(n.y, y);
+  });
+
+  test('つかまえたあと1.2秒は、次をつかまえられない', () => {
+    const g = newGame({ npcCount: 0 }); toPlay(g);
+    for (const c of g.chars) { c.x = 1400; c.y = 300; }
+    eq(H.attack(g), 'whiff');
+    eq(H.attack(g), null);
+    run(g, 1.25);
+    eq(H.attack(g), 'whiff');
+    eq(g.seeker.misses, 0, '空ぶりはハズレに数えない');
+  });
+
+  test('ハズレ3回で、ニンゲンの勝ち', () => {
+    const g = newGame({ npcCount: 3, hiders: [{ pid: 'a', name: 'A' }] }); toPlay(g);
+    const npcs = g.chars.filter(c => c.kind === 'npc');
+    npcs.forEach((n, i) => { n.x = 300 + i * 300; n.y = 400; });
+    who(g, 'a').x = 1400; who(g, 'a').y = 800;
+    for (const n of npcs) tapOn(g, n);
+    eq(g.phase, 'end');
+    eq(g.result.winner, 'humans'); eq(g.result.reason, 'misses');
+  });
+
+  test('ニンゲンを全員つかまえたら、鬼の勝ち', () => {
+    const g = newGame({ npcCount: 0 }); toPlay(g);
+    const a = who(g, 'a'), b = who(g, 'b');
+    a.x = 400; a.y = 400; b.x = 1200; b.y = 400;
+    eq(tapOn(g, a), 'caught');
+    eq(g.phase, 'play');
+    eq(tapOn(g, b), 'caught');
+    eq(g.result.winner, 'seeker'); eq(g.result.reason, 'caught');
+    near(H.findHider(g, 'a').caughtAt, 0.1, 0.11);
+  });
+
+  test('見つかったニンゲンの体は、その場で止まる（だれの体だったかは残る）', () => {
+    const g = newGame({ npcCount: 0 }); toPlay(g);
+    const a = who(g, 'a');
+    a.x = 400; a.y = 400; H.findHider(g, 'a').stars = 2;
+    eq(tapOn(g, a), 'caught');
+    eq(a.out, 'caught'); eq(a.owner, 'a'); eq(a.name, 'A');
+    eq(H.hidersLeft(g), 1);
+    const rec = H.findHider(g, 'a');
+    eq(rec.out, 'caught'); eq(rec.stars, 2, '成績は残る');
+    run(g, 5, { a: { x: 1, y: 0 } });
+    eq(a.x, 400); eq(a.y, 400);
+  });
+
+  test('残機があると、つかまったニンゲンは鬼から遠いNPCにのりうつって続ける', () => {
+    const g = newGame({ lives: 2 }); toPlay(g);
+    const a = who(g, 'a');
+    const npcBefore = g.chars.filter(c => c.kind === 'npc').length;
+    H.findHider(g, 'a').stars = 2;
+    eq(tapOn(g, a), 'caught');
+    eq(a.out, 'caught', '元の体はその場で止まる'); eq(a.owner, 'a');
+    const body = who(g, 'a');
+    ok(body && body !== a, '新しい体がない');
+    eq(body.kind, 'human'); eq(body.name, 'A');
+    ok(Math.hypot(body.x - g.seeker.x, body.y - g.seeker.y) > C.RESPAWN_FAR, '鬼に近すぎる');
+    eq(g.lives, 1);
+    eq(H.hidersLeft(g), 2);
+    eq(g.chars.filter(c => c.kind === 'npc').length, npcBefore - 1, 'のりうつった分だけNPCが減る');
+    const rec = H.findHider(g, 'a');
+    eq(rec.out, null); eq(rec.caught, 1); eq(rec.stars, 2, '★は引きつぐ');
+    const e = g.events.find(e => e.type === 'caught');
+    eq(e.respawn, true); eq(e.lives, 1);
+    // 新しい体はスマホの操作で動く
+    const x = body.x;
+    run(g, 1, { a: { x: body.x < 800 ? 1 : -1, y: 0 } });
+    near(Math.abs(body.x - x), C.WALK, 2);
+  });
+
+  test('残機を使いきったあとにつかまると脱落。全員脱落で鬼の勝ち', () => {
+    const g = newGame({ lives: 1, hiders: [{ pid: 'a', name: 'A' }] }); toPlay(g);
+    eq(tapOn(g, who(g, 'a')), 'caught');
+    eq(g.lives, 0); eq(g.phase, 'play');
+    eq(tapOn(g, who(g, 'a')), 'caught');
+    eq(H.findHider(g, 'a').out, 'caught');
+    eq(H.findHider(g, 'a').caught, 2);
+    eq(g.result.winner, 'seeker'); eq(g.result.reason, 'caught');
+  });
+
+  test('残機は2人で共有する', () => {
+    const g = newGame({ lives: 1 }); toPlay(g);
+    tapOn(g, who(g, 'a'));            // aが残機を使う
+    eq(g.lives, 0);
+    tapOn(g, who(g, 'b'));            // bはもう残機がないので脱落
+    eq(H.findHider(g, 'b').out, 'caught');
+    eq(H.findHider(g, 'a').out, null);
+    eq(g.phase, 'play');
+  });
+
+  test('ボットものりうつって、ボットとして動きつづける', () => {
+    const g = newGame({ lives: 1, hiders: [{ pid: 'bot0', name: 'B', bot: true }] }); toPlay(g);
+    tapOn(g, who(g, 'bot0'));
+    const body = who(g, 'bot0');
+    eq(body.kind, 'bot');
+    run(g, 20);
+    ok(H.findHider(g, 'bot0').stars >= 1, 'のりうつったあとも★を集める');
+  });
+
+  test('止まった体は★を拾わず、もうつかまえられない', () => {
+    const g = newGame({ npcCount: 0 }); toPlay(g);
+    const a = who(g, 'a');
+    a.x = 400; a.y = 400;
+    tapOn(g, a);
+    const s = g.stars[0]; a.x = s.x; a.y = s.y;
+    H.step(g, 1 / 60, {});
+    eq(g.collected, 0); eq(g.stolen, 0);
+    a.x = 400; a.y = 400;
+    g.seeker.x = 360; g.seeker.y = 400; g.seeker.cooldown = 0;
+    eq(H.tapAt(g, 400, 386), null);
+  });
+
+  test('★が目標の数に届いたら、ニンゲンの勝ち', () => {
+    const g = newGame(); toPlay(g);
+    g.collected = g.goal - 1;
+    const c = who(g, 'a'), s = g.stars[0];
+    c.x = s.x; c.y = s.y;
+    H.step(g, 1 / 60, {});
+    eq(g.result.winner, 'humans'); eq(g.result.reason, 'stars');
+  });
+
+  test('時間切れは鬼の勝ち', () => {
+    const g = newGame({ roundTime: 2 }); toPlay(g);
+    run(g, 2.1);
+    eq(g.result.winner, 'seeker'); eq(g.result.reason, 'time');
+  });
+
+  test('NPCもときどき★のほうへ歩くので、1分あれば★を横取りする', () => {
+    const g = newGame({ seed: 9, hideTime: 0.1 });
+    run(g, 60);
+    ok(g.stolen >= 1, '横取り ' + g.stolen);
+  });
+
+  test('スマホの鬼はスティックで歩ける（ふつうの人より速い）', () => {
+    const g = newGame({ seeker: 's', npcCount: 0 }); toPlay(g);
+    const x = g.seeker.x;
+    run(g, 1, { s: { x: 1, y: 0 } });
+    near(g.seeker.x, x + C.SEEKER_SPEED, 1);
+    ok(C.SEEKER_SPEED > C.WALK);
+    eq(g.seeker.dir, 0);
+  });
+
+  test('鬼の速さは変えられる', () => {
+    const g = newGame({ seeker: 's', npcCount: 0, seekerSpeed: 150 }); toPlay(g);
+    const x = g.seeker.x;
+    run(g, 1, { s: { x: 1, y: 0 } });
+    near(g.seeker.x, x + 150, 1);
+  });
+
+  test('つかまえられる範囲は変えられる（タップも前方攻撃も）', () => {
+    // ふつう：200はなれた人はタップでとどかない
+    let g = newGame({ npcCount: 0 }); toPlay(g);
+    let a = who(g, 'a');
+    a.x = 400; a.y = 400; who(g, 'b').x = 1400; who(g, 'b').y = 800;
+    g.seeker.x = 600; g.seeker.y = 400;
+    eq(H.tapAt(g, a.x, a.y - 14), 'far');
+    // とてもひろい（1.6倍）：とどく
+    g = newGame({ npcCount: 0, catchScale: 1.6 }); toPlay(g);
+    a = who(g, 'a');
+    a.x = 400; a.y = 400; who(g, 'b').x = 1400; who(g, 'b').y = 800;
+    g.seeker.x = 600; g.seeker.y = 400;
+    eq(H.tapAt(g, a.x, a.y - 14), 'caught');
+    near(g.seeker.range, C.ATTACK_RANGE * 1.6, 0.01);
+    // せまい（0.75倍）：前方攻撃は 75×0.75≒56 まで
+    g = newGame({ npcCount: 0, catchScale: 0.75 }); toPlay(g);
+    a = who(g, 'a'); who(g, 'b').x = 1400; who(g, 'b').y = 800;
+    g.seeker.x = 600; g.seeker.y = 700; g.seeker.dir = 0;
+    a.x = 665; a.y = 700;
+    eq(H.attack(g), 'whiff');
+  });
+
+  test('鬼は壁や噴水を通りぬけない', () => {
+    const g = newGame({ seeker: 's', npcCount: 0 }); toPlay(g);
+    run(g, 20, { s: { x: 0, y: -1 } });
+    ok(H.isFree(g.seeker.x, g.seeker.y, C.R - 0.5), `(${g.seeker.x}, ${g.seeker.y})`);
+    run(g, 20, { s: { x: -1, y: 0 } });
+    near(g.seeker.x, C.BOUNDS.x0 + C.R, 0.01);
+  });
+
+  test('ボットは★へまっすぐ向かう', () => {
+    const g = newGame({ npcCount: 0, hiders: [{ pid: 'bot0', name: 'B', bot: true }] }); toPlay(g);
+    const b = who(g, 'bot0');
+    b.x = 200; b.y = 450;
+    g.stars = [{ x: 600, y: 450 }];   // あいだに障害物のない場所
+    run(g, 2);
+    near(b.x, 200 + C.WALK * 2, 1);
+    near(b.y, 450, 0.5);
+    run(g, 6);
+    eq(g.collected, 1, '★に着いて拾う');
+  });
+
+  test('ボットは自分で★を集める', () => {
+    const g = newGame({ seed: 3, hiders: [0, 1, 2].map(i => ({ pid: 'bot' + i, name: 'B' + i, bot: true })), roundTime: 150 });
+    run(g, 150);
+    ok(g.collected >= 3, '集めた★ ' + g.collected);
+  });
+
+  const out = document.getElementById('out');
+  for (const [pass, name] of results) {
+    const li = document.createElement('li');
+    li.className = pass ? 'ok' : 'ng';
+    li.textContent = (pass ? '✓ ' : '✗ ') + name;
+    out.append(li);
+  }
+  const ng = results.filter(r => !r[0]).length;
+  document.getElementById('summary').textContent = ng ? `失敗 ${ng} / ${results.length}` : `すべて成功 ${results.length} / ${results.length}`;
+  document.getElementById('summary').className = ng ? 'ng' : 'ok';
+</script>
+</body>
+</html>
